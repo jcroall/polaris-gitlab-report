@@ -19,8 +19,21 @@ import {
 
 import {logger} from "@jcroall/synopsys-sig-node/lib";
 import * as fs from "fs";
-import {relatavize_path} from "@jcroall/synopsys-sig-node/lib/path";
+import {relatavize_path} from "@jcroall/synopsys-sig-node/lib/paths";
 import {gitlabCreateDiscussionWithoutPosition} from "@jcroall/synopsys-sig-node/lib/gitlab/discussions";
+import {PolarisTaskInputs} from "@jcroall/synopsys-sig-node/lib/polaris/model/PolarisTaskInput";
+import PolarisConnection from "@jcroall/synopsys-sig-node/lib/polaris/model/PolarisConnection";
+import PolarisInputReader from "@jcroall/synopsys-sig-node/lib/polaris/input/PolarisInputReader";
+import PolarisService from "@jcroall/synopsys-sig-node/lib/polaris/service/PolarisService";
+import {gitlabGetChangesForMR} from "@jcroall/synopsys-sig-node/lib/gitlab/gitlab-changes";
+import ChangeSetEnvironment from "@jcroall/synopsys-sig-node/lib/polaris/changeset/ChangeSetEnvironment";
+import ChangeSetFileWriter from "@jcroall/synopsys-sig-node/lib/polaris/changeset/ChangeSetFileWriter";
+import ChangeSetReplacement from "@jcroall/synopsys-sig-node/lib/polaris/changeset/ChangeSetReplacement";
+import PolarisInstaller from "@jcroall/synopsys-sig-node/lib/polaris/cli/PolarisInstaller";
+import PolarisInstall from "@jcroall/synopsys-sig-node/lib/polaris/model/PolarisInstall";
+import PolarisRunner from "@jcroall/synopsys-sig-node/lib/polaris/cli/PolarisRunner";
+import * as os from "os";
+import PolarisIssueWaiter from "@jcroall/synopsys-sig-node/lib/polaris/util/PolarisIssueWaiter";
 
 const chalk = require('chalk')
 const figlet = require('figlet')
@@ -31,15 +44,14 @@ const GITLAB_SECURITY_DASHBOARD_SAST_FILE = "synopsys-gitlab-sast.json"
 export async function main(): Promise<void> {
   console.log(
       chalk.blue(
-          figlet.textSync('coverity-gitlab', { horizontalLayout: 'full' })
+          figlet.textSync('polaris-gitlab', { horizontalLayout: 'full' })
       )
   )
   program
-      .description("Integrate Synopsys Coverity Static Analysis into GitLab")
-      .option('-j, --json <Coverity Results v7 JSON>', 'Location of the Coverity Results v7 JSON')
-      .option('-u, --coverity-url <Coverity URL>', 'Location of the Coverity server')
-      .option('-p, --coverity-project <Coverity Project Name>', 'Name of Coverity project')
-      .option('-g, --gitlab-security', 'Generate GitLab Security Dashboard output')
+      .description("Integrate Synopsys Polaris Static Analysis into GitLab")
+      .option('-u, --polaris-url <Polaris URL>', 'Location of the Polaris service')
+      .option('-a, --polaris-args <Polaris arguments>', 'Arguments to pass to polaris CLI')
+      .option('-b, --build-command <Build Command>', 'Command for building the project from source code')
       .option('-d, --debug', 'Enable debug mode (extra verbosity)')
       .parse(process.argv)
 
@@ -47,28 +59,24 @@ export async function main(): Promise<void> {
 
   logger.info(`Starting Coverity GitLab Integration`)
 
-  const COVERITY_URL = process.env['COVERITY_URL']
-  const COVERITY_PROJECT = process.env['COVERITY_PROJECT']
-  const COV_USER = process.env['COV_USER']
-  const COVERITY_PASSPHRASE = process.env['COVERITY_PASSPHRASE']
+  const POLARIS_ACCESS_TOKEN = process.env['POLARIS_ACCESS_TOKEN']
+  const POLARIS_URL = process.env['POLARIS_URL']
 
-  let coverity_url = options.coverityUrl ? options.coverityUrl as string : COVERITY_URL
-  if (!coverity_url) {
-    logger.error(`Must specify Coverity URL in arguments or environment`)
+  const POLARIS_PROXY_URL = process.env['POLARIS_PROXY_URL']
+  const POLARIS_PROXY_USERNAME = process.env['POLARIS_PROXY_USERNAME']
+  const POLARIS_PROXY_PASSWORD = process.env['POLARIS_PROXY_PASSWORD']
+
+  logger.info(`url=${options.polarisUrl}`)
+  let polaris_url = options.polarisUrl ? options.polarisUrl as string : POLARIS_URL
+  if (!polaris_url) {
+    logger.error(`Must specify Polaris URL in arguments or environment`)
     process.exit(1)
   }
 
-  let coverity_project_name = options.coverityProject ? options.coverityProject as string : COVERITY_PROJECT
-  if (!coverity_project_name) {
-    logger.error(`Must specify Coverity Project in arguments or environment`)
+  if (!POLARIS_ACCESS_TOKEN) {
+    logger.error(`Mist specify Polaris Access Token in POLARIS_ACCESS_TOKEN`)
     process.exit(1)
   }
-
-  const coverity_results_file: string = undefined === options.json
-      ? 'coverity-results.json'
-      : options.json || 'coverity-results.json'
-
-  logger.info(`Using JSON file path: ${coverity_results_file}`)
 
   if (!process.argv.slice(2).length) {
     program.outputHelp()
@@ -78,6 +86,9 @@ export async function main(): Promise<void> {
     logger.level = 'debug'
     logger.debug(`Enabled debug mode`)
   }
+
+  let build_command = options.buildCommand ? options.buildCommand : ""
+  let polaris_args = options.polarisArgs ? options.polarisArgs : ""
 
   const GITLAB_TOKEN = process.env['GITLAB_TOKEN']
   const CI_SERVER_URL = process.env['CI_SERVER_URL']
@@ -108,6 +119,97 @@ export async function main(): Promise<void> {
     }
   }
 
+  logger.info(`Connecting to Polaris service at: ${polaris_url}`)
+
+  const task_input: PolarisTaskInputs = new PolarisInputReader().getPolarisInputs(polaris_url, POLARIS_ACCESS_TOKEN,
+      POLARIS_PROXY_URL ? POLARIS_PROXY_URL : "",
+      POLARIS_PROXY_USERNAME ? POLARIS_PROXY_USERNAME : "",
+      POLARIS_PROXY_PASSWORD ? POLARIS_PROXY_PASSWORD : "",
+      options.buildCommand, true, true, false)
+  const connection: PolarisConnection = task_input.polaris_connection;
+
+  var polaris_install_path: string | undefined;
+  //polaris_install_path = `${process.env['HOME']}/.polaris-cli`
+  polaris_install_path = os.tmpdir()
+  if (!polaris_install_path) {
+    logger.warn("Agent did not have a tool directory, polaris will be installed to the current working directory.");
+    polaris_install_path = process.cwd();
+  }
+  logger.info(`Polaris Software Integrity Platform will be installed to the following path: ` + polaris_install_path);
+
+  logger.info("Connecting to Polaris Software Integrity Platform server.")
+  const polaris_service = new PolarisService(logger, connection);
+  await polaris_service.authenticate();
+  logger.debug("Authenticated with polaris.");
+
+  try {
+    logger.debug("Fetching organization name and task version.");
+    const org_name = await polaris_service.fetch_organization_name();
+    logger.debug(`Organization name: ${org_name}`)
+    /*
+    const task_version = PhoneHomeService.FindTaskVersion();
+
+    logger.debug("Starting phone home.");
+    const phone_home_service = PhoneHomeService.CreateClient(log);
+    await phone_home_service.phone_home(connection.url, task_version, org_name);
+    logger.debug("Phoned home.");
+     */
+  } catch (e){
+    /*
+    logger.debug("Unable to phone home.");
+     */
+  }
+
+  const merge_request_iid = parseInt(CI_MERGE_REQUEST_IID, 10)
+
+
+  //If there are no changes, we can potentially bail early, so we do that first.
+  var actual_build_command = build_command;
+  if (merge_request_iid > 0 && task_input.should_populate_changeset) {
+    logger.debug("Populating change set for Polaris Software Integrity Platform.");
+    const changed_files = await gitlabGetChangesForMR(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid)
+    if (changed_files.length == 0 && task_input.should_empty_changeset_fail) {
+      logger.error(` Task failed: No changed files were found.`)
+      return;
+    } else if (changed_files.length == 0) {
+      logger.info("Task finished: No changed files were found.")
+      return;
+    }
+    const change_set_environment = new ChangeSetEnvironment(logger, process.env);
+    const change_file = change_set_environment.get_or_create_file_path(process.cwd());
+    change_set_environment.set_enable_incremental();
+
+    await new ChangeSetFileWriter(logger).write_change_set_file(change_file, changed_files);
+    actual_build_command = new ChangeSetReplacement().replace_build_command(actual_build_command, change_file);
+
+    logger.debug(`actual_build_command=${actual_build_command} change_file=${change_file}`)
+  }
+
+  logger.info("Installing Polaris Software Integrity Platform.");
+  var polaris_installer = PolarisInstaller.default_installer(logger, polaris_service);
+  var polaris_install: PolarisInstall = await polaris_installer.install_or_locate_polaris(connection.url, polaris_install_path);
+  logger.info("Found Polaris Software Integrity Platform: " + polaris_install.polaris_executable);
+
+  logger.info("Running Polaris Software Integrity Platform.");
+  var polaris_runner = new PolarisRunner(logger);
+  var polaris_run_result = await polaris_runner.execute_cli(connection, polaris_install, process.cwd(), actual_build_command);
+
+  if (task_input.should_wait_for_issues) {
+    logger.info("Checking for issues.")
+    var polaris_waiter = new PolarisIssueWaiter(logger);
+    var issue_count = await polaris_waiter.wait_for_issues(polaris_run_result.scan_cli_json_path, polaris_service);
+    if (issue_count != null && issue_count > 0) {
+      logger.error(`Polaris Software Integrity Platform found ${issue_count} total issues.`)
+    }
+  } else {
+    logger.info("Will not check for issues.")
+  }
+
+  logger.info("Task completed.")
+
+  logger.info("Executed Polaris Software Integrity Platform: " + polaris_run_result.return_code);
+
+  /*
   // Collect all Coverity data and generate optional GitLab Security dashboard before interacting with GitLab
 
   // TODO validate file exists and is .json?
@@ -265,8 +367,11 @@ export async function main(): Promise<void> {
   } else {
     process.exit(0)
   }
+
+   */
 }
 
+/*
 function gitlab_get_coverity_json_vulnerability(issue: CoverityIssueOccurrence, cid_url: string) : any {
   let json_vlun = {
     id: issue.mergeKey,
@@ -322,5 +427,6 @@ function gitlab_initialize_coverity_json() : any {
     vulnerabilities: []
   };
 }
+ */
 
 main()

@@ -23,14 +23,16 @@
   },
   "dependencies": {
     "@gitbeaker/node": "^35.4.0",
-    "@jcroall/synopsys-sig-node": "^1.1.11",
+    "@jcroall/synopsys-sig-node": "^1.1.23",
     "axios": "^0.26.1",
     "chalk": "^4.1.0",
     "clear": "^0.1.0",
     "commander": "^7.1.0",
     "figlet": "^1.5.0",
     "got": "^12.0.1",
+    "jsonpath": "^1.1.1",
     "ky": "^0.30.0",
+    "moment": "^2.29.1",
     "path": "^0.12.7",
     "uuid": "^8.3.2"
   },
