@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@gitbeaker/node": "^35.4.0",
-    "@jcroall/synopsys-sig-node": "^1.1.36",
+    "@jcroall/synopsys-sig-node": "^1.1.37",
     "axios": "^0.26.1",
     "chalk": "^4.1.0",
     "clear": "^0.1.0",
