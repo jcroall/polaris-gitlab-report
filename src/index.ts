@@ -202,7 +202,8 @@ export async function main(): Promise<void> {
       logger.info("Checking for issues.")
       var polaris_waiter = new PolarisIssueWaiter(logger);
       var issue_count = await polaris_waiter.wait_for_issues(polaris_run_result.scan_cli_json_path, polaris_service);
-      logger.error(`Polaris Software Integrity Platform found ${issue_count} total issues.`)
+      // Ignore, we will calculate issues separately
+      // logger.error(`Polaris Software Integrity Platform found ${issue_count} total issues.`)
     } else {
       logger.info("Will not check for issues.")
     }
