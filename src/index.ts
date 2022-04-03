@@ -250,18 +250,18 @@ export async function main(): Promise<void> {
     }
 
     if (!branch_id_compare) {
-      logger.error(`Running on merge request and unable to find previous Polaris analysis for merge target: ${merge_target_branch}`)
-      process.exit(1)
+      logger.error(`Running on merge request and unable to find previous Polaris analysis for merge target: ${merge_target_branch}, will fall back to full results`)
+    } else {
+      issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
+          true, runs[0].id, false, branch_id_compare, "", "opened")
     }
-    issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
-        true, runs[0].id, false, branch_id_compare, "", "opened")
-  } else {
-    issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
-        true, "", false, "", "", "")
-
   }
 
-  // curl -X GET "https://sipse.polaris.synopsys.com/api/query/v1/issues?project-id=f435f59c-5abb-4957-a725-28d93f0e645b&branch-id=c7b567ee-39ae-4ca2-8d56-7496d29f32d8&compare-branch-id=94f11f15-2892-4496-9245-b53b6d25ca10&filter%5Bissue%5D%5Bstatus%5D%5B%24eq%5D=closed&page%5Blimit%5D=50" -H "accept: application/vnd.api+json"
+  if (!issuesUnified) {
+    logger.debug(`No merge request or merge comparison available, fetching full results`)
+    issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
+        true, "", false, "", "", "")
+  }
 
   logger.info("Executed Polaris Software Integrity Platform: " + polaris_run_result.return_code);
 
