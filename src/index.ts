@@ -27,7 +27,7 @@ import PolarisRunner from "@jcroall/synopsys-sig-node/lib/polaris/cli/PolarisRun
 import * as os from "os";
 import PolarisIssueWaiter from "@jcroall/synopsys-sig-node/lib/polaris/util/PolarisIssueWaiter";
 import {
-  POLARIS_COMMENT_PREFACE, polarisCreateReviewCommentMessage,
+  POLARIS_COMMENT_PREFACE, polarisCreateReviewCommentMessage, polarisGetBranches,
   polarisGetIssuesUnified,
   polarisGetRuns, polarisIsInDiff
 } from "@jcroall/synopsys-sig-node/lib/polaris/service/PolarisAPI";
@@ -234,8 +234,34 @@ export async function main(): Promise<void> {
     logger.debug(`...`)
   }
 
-  await exec("cat polaris.yml")
-  let issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id, false, runs[0].id, "earlier")
+  let branches = await polarisGetBranches(polaris_service, project_id)
+  let merge_target_branch = process.env["CI_MERGE_REQUEST_TARGET_BRANCH_NAME"]
+
+  let issuesUnified = undefined
+
+  if (is_merge_request) {
+    let branches = await polarisGetBranches(polaris_service, project_id)
+    let branch_id_compare = undefined
+    for (const branch of branches) {
+      if (branch.attributes.name == merge_target_branch) {
+        logger.debug(`Running on merge request, and target branch is '${merge_target_branch}' which has Polaris ID ${branch.id}`)
+        branch_id_compare = branch.id
+        process.exit(1)
+      }
+    }
+
+    if (!branch_id_compare) {
+      logger.error(`Running on merge request and unable to find previous Polaris analysis for merge target: ${merge_target_branch}`)
+      process.exit(1)
+    }
+    issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
+        true, "", branch_id_compare, "", "closed")
+  } else {
+    issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
+        true, "", "", "", "")
+  }
+
+  // curl -X GET "https://sipse.polaris.synopsys.com/api/query/v1/issues?project-id=f435f59c-5abb-4957-a725-28d93f0e645b&branch-id=c7b567ee-39ae-4ca2-8d56-7496d29f32d8&compare-branch-id=94f11f15-2892-4496-9245-b53b6d25ca10&filter%5Bissue%5D%5Bstatus%5D%5B%24eq%5D=closed&page%5Blimit%5D=50" -H "accept: application/vnd.api+json"
 
   logger.info("Executed Polaris Software Integrity Platform: " + polaris_run_result.return_code);
 
