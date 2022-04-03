@@ -3,7 +3,7 @@
   "description": "Integrate Synopsys Polaris Static Analysis Results Into GitLab",
   "license": "Apache-2.0",
   "author": "James Croall",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "main": "lib/index.js",
   "bin": {
     "polaris-gitlab-report": "bin/polaris-gitlab-report"
