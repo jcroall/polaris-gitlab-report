@@ -32,6 +32,7 @@ import {
   polarisGetRuns, polarisIsInDiff
 } from "@jcroall/synopsys-sig-node/lib/polaris/service/PolarisAPI";
 import {IPolarisIssueUnified} from "@jcroall/synopsys-sig-node/lib/polaris/model/PolarisAPI";
+import {exec} from "child_process";
 
 const chalk = require('chalk')
 const figlet = require('figlet')
@@ -233,6 +234,7 @@ export async function main(): Promise<void> {
     logger.debug(`...`)
   }
 
+  await exec("cat polaris.yml")
   let issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id, false, runs[0].id, "earlier")
 
   logger.info("Executed Polaris Software Integrity Platform: " + polaris_run_result.return_code);
