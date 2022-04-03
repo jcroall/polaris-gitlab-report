@@ -246,7 +246,6 @@ export async function main(): Promise<void> {
       if (branch.attributes.name == merge_target_branch) {
         logger.debug(`Running on merge request, and target branch is '${merge_target_branch}' which has Polaris ID ${branch.id}`)
         branch_id_compare = branch.id
-        process.exit(1)
       }
     }
 
