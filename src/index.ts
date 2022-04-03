@@ -254,10 +254,10 @@ export async function main(): Promise<void> {
       process.exit(1)
     }
     issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
-        true, "", branch_id_compare, "", "opened")
+        true, runs[0].id, false, branch_id_compare, "", "opened")
   } else {
     issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
-        true, "", "", "", "")
+        true, "", false, "", "", "")
 
   }
 
