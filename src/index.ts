@@ -58,6 +58,11 @@ export async function main(): Promise<void> {
 
   const options = program.opts()
 
+  if (options.debug) {
+    logger.level = 'debug'
+    logger.debug(`Enabled debug mode`)
+  }
+
   logger.info(`Starting Coverity GitLab Integration`)
 
   logger.debug(`Security gate filter: ${options.securityGateFilter}`)
@@ -93,11 +98,6 @@ export async function main(): Promise<void> {
 
   if (!process.argv.slice(2).length) {
     program.outputHelp()
-  }
-
-  if (options.debug) {
-    logger.level = 'debug'
-    logger.debug(`Enabled debug mode`)
   }
 
   let polaris_command = options.polarisCommand ? options.polarisCommand : ""
@@ -379,7 +379,9 @@ export async function main(): Promise<void> {
 
   let security_gate_pass = true
   if (securityGateFilters) {
+    logger.debug(`Checking security gate...`)
     for (const issue of issuesUnified) {
+      logger.debug(`issue ${issue.key}`)
       if (!isIssueAllowed(securityGateFilters, issue.severity, issue.cwe, is_merge_request ? true : false)) {
         logger.debug(`Issue ${issue.key} does not pass security gate filters`)
         security_gate_pass = false
