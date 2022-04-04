@@ -67,9 +67,9 @@ export async function main(): Promise<void> {
 
   logger.debug(`Security gate filter: ${options.securityGateFilter}`)
   let securityGateFilters = undefined
-  if (options.securityGateFilter) {
+  if (process.env.SECURITY_GATE_FILTER) {
     try {
-      securityGateFilters = readSecurityGateFiltersFromString(options.securityGateFilter)
+      securityGateFilters = readSecurityGateFiltersFromString(process.env.SECURITY_GATE_FILTER)
     } catch (error) {
       logger.error(`Unable to parse security gate filters: ${error}`)
       process.exit(2)
