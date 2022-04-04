@@ -288,97 +288,94 @@ export async function main(): Promise<void> {
   }
 
 
-  if (!is_merge_request) {
-    logger.info('Not a Pull Request, nothing else to do.')
-    return
-  }
+  if (is_merge_request) {
+    logger.info(`Connecting to GitLab: ${CI_SERVER_URL}`)
 
-  logger.info(`Connecting to GitLab: ${CI_SERVER_URL}`)
+    let project = await gitlabGetProject(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID)
 
-  let project = await gitlabGetProject(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID)
-
-  const review_discussions = await gitlabGetDiscussions(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid).
+    const review_discussions = await gitlabGetDiscussions(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid).
     then(discussions => discussions.filter(discussion => discussion.notes![0].body.includes(POLARIS_COMMENT_PREFACE)))
-  const diff_map = await gitlabGetDiffMap(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid)
+    const diff_map = await gitlabGetDiffMap(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid)
 
-  for (const issue of issuesUnified) {
-    logger.info(`Found Polaris Issue ${issue.key} at ${issue.path}:${issue.line}`)
+    for (const issue of issuesUnified) {
+      logger.info(`Found Polaris Issue ${issue.key} at ${issue.path}:${issue.line}`)
 
-    logger.info(`Issue state on server: ${issue.dismissed ? "Dismissed" : "Not Dismissed"}`)
+      logger.info(`Issue state on server: ${issue.dismissed ? "Dismissed" : "Not Dismissed"}`)
 
-    const reviewCommentBody = polarisCreateReviewCommentMessage(issue)
+      const reviewCommentBody = polarisCreateReviewCommentMessage(issue)
 
-    let path = issue.path
+      let path = issue.path
 
-    const issueCommentBody = polarisCreateReviewCommentMessage(issue)
+      const issueCommentBody = polarisCreateReviewCommentMessage(issue)
 
-    const review_discussion_index = review_discussions.findIndex(
-        discussion => discussion.notes![0].position?.new_line === issue.line &&
-            discussion.notes![0].body.includes(issue.key))
-    let existing_discussion = undefined
-    if (review_discussion_index !== -1) {
-      existing_discussion = review_discussions.splice(review_discussion_index, 1)[0]
-    }
-
-    const comment_index = review_discussions.findIndex(discussion => discussion.notes![0].body.includes(issue.key))
-    let existing_comment = undefined
-    if (comment_index !== -1) {
-      existing_comment = review_discussions.splice(comment_index, 1)[0]
-    }
-
-    if (existing_discussion !== undefined) {
-      logger.info(`Issue already reported in discussion #${existing_discussion.id} note #${existing_discussion.notes![0].id}, updating if necessary...`)
-      if (existing_discussion.notes![0].body !== reviewCommentBody) {
-        await gitlabUpdateNote(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid,
-            parseInt(existing_discussion.id, 10),
-            existing_discussion.notes![0].id,
-            reviewCommentBody).catch(error => {
-              logger.error(`Unable to update discussion: ${error.message}`)
-        })
-
+      const review_discussion_index = review_discussions.findIndex(
+          discussion => discussion.notes![0].position?.new_line === issue.line &&
+              discussion.notes![0].body.includes(issue.key))
+      let existing_discussion = undefined
+      if (review_discussion_index !== -1) {
+        existing_discussion = review_discussions.splice(review_discussion_index, 1)[0]
       }
-    } else if (existing_comment !== undefined) {
-      logger.info(`Issue already reported in discussion #${existing_comment.id} note #${existing_comment.notes![0].id}, updating if necessary...`)
-      if (existing_comment.notes![0].body !== issueCommentBody) {
-        await gitlabUpdateNote(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid,
-            parseInt(existing_comment.id, 10),
-            existing_comment.notes![0].id,
-            reviewCommentBody).catch(error => {
-              logger.error(`Unable to update discussion: ${error.message}`)
+
+      const comment_index = review_discussions.findIndex(discussion => discussion.notes![0].body.includes(issue.key))
+      let existing_comment = undefined
+      if (comment_index !== -1) {
+        existing_comment = review_discussions.splice(comment_index, 1)[0]
+      }
+
+      if (existing_discussion !== undefined) {
+        logger.info(`Issue already reported in discussion #${existing_discussion.id} note #${existing_discussion.notes![0].id}, updating if necessary...`)
+        if (existing_discussion.notes![0].body !== reviewCommentBody) {
+          await gitlabUpdateNote(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid,
+              parseInt(existing_discussion.id, 10),
+              existing_discussion.notes![0].id,
+              reviewCommentBody).catch(error => {
+            logger.error(`Unable to update discussion: ${error.message}`)
+          })
+
+        }
+      } else if (existing_comment !== undefined) {
+        logger.info(`Issue already reported in discussion #${existing_comment.id} note #${existing_comment.notes![0].id}, updating if necessary...`)
+        if (existing_comment.notes![0].body !== issueCommentBody) {
+          await gitlabUpdateNote(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid,
+              parseInt(existing_comment.id, 10),
+              existing_comment.notes![0].id,
+              reviewCommentBody).catch(error => {
+            logger.error(`Unable to update discussion: ${error.message}`)
+          })
+        }
+      } else if (issue.dismissed) {
+        logger.info('Issue ignored on server, no comment needed.')
+      } else if (polarisIsInDiff(issue, diff_map)) {
+        logger.info('Issue not reported, adding a comment to the review.')
+
+        await gitlabCreateDiscussion(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid, issue.line,
+            issue.path, reviewCommentBody, CI_MERGE_REQUEST_DIFF_BASE_SHA ? CI_MERGE_REQUEST_DIFF_BASE_SHA : '',
+            CI_COMMIT_SHA ? CI_COMMIT_SHA : '').catch(error => {
+          logger.error(`Unable to create discussion: ${error.message}`)
+        })
+      } else {
+        logger.info('Issue not reported, adding an issue comment.')
+
+        await gitlabCreateDiscussionWithoutPosition(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid, issueCommentBody).catch(error => {
+          logger.error(`Unable to create discussion: ${error.message}`)
         })
       }
-    } else if (issue.dismissed) {
-      logger.info('Issue ignored on server, no comment needed.')
-    } else if (polarisIsInDiff(issue, diff_map)) {
-      logger.info('Issue not reported, adding a comment to the review.')
-
-      await gitlabCreateDiscussion(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid, issue.line,
-          issue.path, reviewCommentBody, CI_MERGE_REQUEST_DIFF_BASE_SHA ? CI_MERGE_REQUEST_DIFF_BASE_SHA : '',
-          CI_COMMIT_SHA ? CI_COMMIT_SHA : '').catch(error => {
-            logger.error(`Unable to create discussion: ${error.message}`)
-      })
-    } else {
-      logger.info('Issue not reported, adding an issue comment.')
-
-      await gitlabCreateDiscussionWithoutPosition(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid, issueCommentBody).catch(error => {
-            logger.error(`Unable to create discussion: ${error.message}`)
-      })
     }
-  }
 
-  for (const discussion of review_discussions) {
-    if (coverityIsPresent(discussion.notes![0].body)) {
-      logger.info(`Discussion #${discussion.id} Note #${discussion.notes![0].id} represents a Coverity issue which is no longer present, updating comment to reflect resolution.`)
-      let commit_sha = process.env.CI_COMMIT_SHA ? process.env.CI_COMMIT_SHA : "N/A"
-      await gitlabUpdateNote(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid,
-          parseInt(discussion.id, 10),
-          discussion.notes![0].id, polarisCreateNoLongerPresentMessage(discussion.notes![0].body, commit_sha)).catch(error => {
-            logger.error(`Unable to update note #${discussion.notes![0].id}: ${error.message}`)
-      })
+    for (const discussion of review_discussions) {
+      if (coverityIsPresent(discussion.notes![0].body)) {
+        logger.info(`Discussion #${discussion.id} Note #${discussion.notes![0].id} represents a Coverity issue which is no longer present, updating comment to reflect resolution.`)
+        let commit_sha = process.env.CI_COMMIT_SHA ? process.env.CI_COMMIT_SHA : "N/A"
+        await gitlabUpdateNote(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid,
+            parseInt(discussion.id, 10),
+            discussion.notes![0].id, polarisCreateNoLongerPresentMessage(discussion.notes![0].body, commit_sha)).catch(error => {
+          logger.error(`Unable to update note #${discussion.notes![0].id}: ${error.message}`)
+        })
+      }
     }
-  }
 
-  logger.info(`Found ${issuesUnified.length} Polaris issues.`)
+    logger.info(`Found ${issuesUnified.length} Polaris issues.`)
+  }
 
   let security_gate_pass = true
   if (securityGateFilters) {
