@@ -65,7 +65,6 @@ export async function main(): Promise<void> {
 
   logger.info(`Starting Coverity GitLab Integration`)
 
-  logger.debug(`Security gate filter: ${options.securityGateFilter}`)
   let securityGateFilters = undefined
   if (process.env.SECURITY_GATE_FILTER) {
     try {
@@ -75,6 +74,7 @@ export async function main(): Promise<void> {
       process.exit(2)
     }
   }
+  logger.debug(`Security gate filter: ${options.securityGateFilter}`)
 
   const POLARIS_ACCESS_TOKEN = process.env['POLARIS_ACCESS_TOKEN']
   const POLARIS_URL = process.env['POLARIS_URL']
