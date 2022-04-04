@@ -7,7 +7,7 @@ import {
   gitlabGetProject,
   gitlabUpdateNote,
   coverityIsPresent,
-  coverityCreateNoLongerPresentMessage
+  coverityCreateNoLongerPresentMessage, readSecurityGateFiltersFromString, isIssueAllowed
 } from "@jcroall/synopsys-sig-node/lib/"
 
 import {logger} from "@jcroall/synopsys-sig-node/lib";
@@ -27,7 +27,7 @@ import PolarisRunner from "@jcroall/synopsys-sig-node/lib/polaris/cli/PolarisRun
 import * as os from "os";
 import PolarisIssueWaiter from "@jcroall/synopsys-sig-node/lib/polaris/util/PolarisIssueWaiter";
 import {
-  POLARIS_COMMENT_PREFACE, polarisCreateReviewCommentMessage, polarisGetBranches,
+  POLARIS_COMMENT_PREFACE, polarisCreateNoLongerPresentMessage, polarisCreateReviewCommentMessage, polarisGetBranches,
   polarisGetIssuesUnified,
   polarisGetRuns, polarisIsInDiff
 } from "@jcroall/synopsys-sig-node/lib/polaris/service/PolarisAPI";
@@ -51,6 +51,7 @@ export async function main(): Promise<void> {
       .option('-u, --polaris-url <Polaris URL>', 'Location of the Polaris service')
       .option('-s, --skip-run', 'Skip running Polaris, assume it is already complete')
       .option('-g, --gitlab-security', 'Enable GitLab security dashboard')
+      .option('-f, --security-gate-filter <Filter JSON>', 'JSON specification for security gate filter')
       .option('-c, --polaris-command <Build Command>', 'Command line to pass to polaris CLI')
       .option('-d, --debug', 'Enable debug mode (extra verbosity)')
       .parse(process.argv)
@@ -58,6 +59,17 @@ export async function main(): Promise<void> {
   const options = program.opts()
 
   logger.info(`Starting Coverity GitLab Integration`)
+
+  logger.debug(`Security gate filter: ${options.securityGateFilter}`)
+  let securityGateFilters = undefined
+  if (options.securityGateFilter) {
+    try {
+      securityGateFilters = readSecurityGateFiltersFromString(options.securityGateFilter)
+    } catch (error) {
+      logger.error(`Unable to parse security gate filters: ${error}`)
+      process.exit(2)
+    }
+  }
 
   const POLARIS_ACCESS_TOKEN = process.env['POLARIS_ACCESS_TOKEN']
   const POLARIS_URL = process.env['POLARIS_URL']
@@ -260,7 +272,7 @@ export async function main(): Promise<void> {
   if (!issuesUnified) {
     logger.debug(`No merge request or merge comparison available, fetching full results`)
     issuesUnified = await polarisGetIssuesUnified(polaris_service, project_id, branch_id,
-        true, "", false, "", "", "")
+        true, runs[0].id, false, "", "", "")
   }
 
   logger.info("Executed Polaris Software Integrity Platform: " + polaris_run_result.return_code);
@@ -357,20 +369,30 @@ export async function main(): Promise<void> {
   for (const discussion of review_discussions) {
     if (coverityIsPresent(discussion.notes![0].body)) {
       logger.info(`Discussion #${discussion.id} Note #${discussion.notes![0].id} represents a Coverity issue which is no longer present, updating comment to reflect resolution.`)
+      let commit_sha = process.env.CI_COMMIT_SHA ? process.env.CI_COMMIT_SHA : "N/A"
       await gitlabUpdateNote(CI_SERVER_URL, GITLAB_TOKEN, CI_PROJECT_ID, merge_request_iid,
           parseInt(discussion.id, 10),
-          discussion.notes![0].id, coverityCreateNoLongerPresentMessage(discussion.notes![0].body)).catch(error => {
+          discussion.notes![0].id, polarisCreateNoLongerPresentMessage(discussion.notes![0].body, commit_sha)).catch(error => {
             logger.error(`Unable to update note #${discussion.notes![0].id}: ${error.message}`)
       })
     }
   }
 
-  logger.info(`Found ${issuesUnified.length} Coverity issues.`)
+  logger.info(`Found ${issuesUnified.length} Polaris issues.`)
 
-  if (issuesUnified.length > 0) {
-    process.exit(1)
-  } else {
-    process.exit(0)
+  let security_gate_pass = true
+  if (securityGateFilters) {
+    for (const issue of issuesUnified) {
+      if (!isIssueAllowed(securityGateFilters, issue.severity, issue.cwe, is_merge_request ? true : false)) {
+        logger.debug(`Issue ${issue.key} does not pass security gate filters`)
+        security_gate_pass = false
+        break
+      }
+    }
+
+    if (!security_gate_pass) {
+      logger.error(`Security gate failure, returning exit code 3`)
+    }
   }
 }
 
